@@ -1,6 +1,10 @@
 import io, json, boto3, logging, base64
 from botocore.exceptions import ClientError
 
+# Define list of functionality. This section can be updated as more are added.
+OPERATIONS_LIST = ['run', 'install', 'bootloader']
+TOOL_LIST = ['httpx', 'gospider']
+
 def lambda_handler(event, context):
     
     def _getParameters(paramName):
@@ -13,28 +17,41 @@ def lambda_handler(event, context):
     basePath = _getParameters('demo-bucket')
    
     # Validate parameters and values.
-    if event['queryStringParameters']['tool'] is None:
+    # Check if queryStringParameters exist. If not, default to None to avoid errors.
+    queryParameters = event.get('queryStringParameters', None)
+    
+    if queryParameters is None:
+        return {"isBase64Encoded":False,"statusCode":400,"body":json.dumps({"error":"Nothing to process. Missing parameters."})}
+    
+    else:
+        programName = event["queryStringParameters"].get('program', None)
+        operationType = event['queryStringParameters'].get('operation', None)
+        toolName = event['queryStringParameters'].get('tool', None)
+    
+    
+    if toolName is None:
         return {"isBase64Encoded":False,"statusCode":400,"body":json.dumps({"error":"Missing tool name."})}
-    if event['queryStringParameters']['operation'] is None:
+    if operationType is None:
         return {"isBase64Encoded":False,"statusCode":400,"body":json.dumps({"error":"Missing operation name."})}
-    if event['queryStringParameters']['operation'] not in ('run', 'install', 'bootloader'):
-        return {"isBase64Encoded":False,"statusCode":400,"body":json.dumps({"error":"Missing a valid operation value. Must be 'run' or 'install'."})}
-    if event['queryStringParameters']['operation'] == 'run':
-        if event['queryStringParameters']['program'] is None:
+    if (toolName not in TOOL_LIST):
+        return {"isBase64Encoded":False,"statusCode":400,"body":json.dumps({"error":"Missing a valid tool name. Must be " + str(TOOL_LIST) + "."})}
+    if (operationType not in OPERATIONS_LIST):
+        return {"isBase64Encoded":False,"statusCode":400,"body":json.dumps({"error":"Missing a valid operation value. Must be " + str(OPERATIONS_LIST) + "."})}
+    if operationType == 'run':
+        if programName is None:
+            return {"isBase64Encoded":False,"statusCode":400,"body":json.dumps({"error":"Missing program name is required for the run operation."})}
+    if operationType == 'bootloader':
+        if programName is None:
             return {"isBase64Encoded":False,"statusCode":400,"body":json.dumps({"error":"Missing program name."})}
-    if event['queryStringParameters']['operation'] == 'bootloader':
-        if event['queryStringParameters']['program'] is None:
-            return {"isBase64Encoded":False,"statusCode":400,"body":json.dumps({"error":"Missing program name."})}
-        if event['queryStringParameters']['tool'] is None:
+        if toolName is None:
             return {"isBase64Encoded":False,"statusCode":400,"body":json.dumps({"error":"Missing tool name."})}
-    if event['queryStringParameters']['program'] is not None:
-        programName = str(event['queryStringParameters']['program'])
-    operationType = str(event['queryStringParameters']['operation'])
-    toolName = str(event['queryStringParameters']['tool'])
     
     status = generateScript(programName, operationType, toolName, basePath)
     
-    htmloutput = '<a href="' + status + '">Download the ' + toolName + ' ' + operationType + ' script.</a>'
+    if (status is None):
+        htmloutput = 'Error in processing.'
+    else:
+        htmloutput = '<a href="' + status + '">Download the ' + toolName + ' ' + operationType + ' script.</a>'
     
     response = {
         "statusCode": 200,
@@ -198,37 +215,6 @@ sh $HACK/security/run/{programName}/sync-{programName}.sh
 wait
 sh $HACK/security/run/{programName}/stepfunctions-{programName}.sh"""
 
-    if (toolName == 'bootloader'):
-        # Load AWS access keys for s3 synchronization
-        secretName = 'brevity-aws-recon'
-        regionName = 'us-east-1'
-        secretRetrieved = get_secret(secretName,regionName)
-        secretjson = json.loads(secretRetrieved)
-        awsAccessKeyId = secretjson['AWS_ACCESS_KEY_ID']
-        awsSecretKey = secretjson['AWS_SECRET_ACCESS_KEY']
-        fileContents = f"""#cloud-config
-packages:
-    - awscli
-runcmd:
-    - export HACK=/root
-    - mkdir $HACK/security
-    - mkdir $HACK/security/config
-    - mkdir $HACK/security/run/{programName}
-    - export AWS_ACCESS_KEY_ID={awsAccessKeyId}
-    - export AWS_SECRET_ACCESS_KEY={awsSecretKey}
-    - export AWS_DEFAULT_REGION={regionName}
-    - aws s3 sync s3://brevity-inputs/config/ /root/security/config/
-    - wait
-    - aws s3 sync s3://brevity-inputs/run/{programName}/ /root/security/run/{programName}/
-    - wait
-    - sh /root/security/config/bounty-startup-{toolName}.sh
-    - wait
-    - sh /root/security/run/{programName}/sync-{programName}.sh
-    - wait
-    - sh /root/security/run/{programName}/{toolName}-{programName}.sh
-    - wait
-    - shutdown now"""
-
     # Upload file to S3
     fileBuffer.write(fileContents)
     objectBuffer = io.BytesIO(fileBuffer.getvalue().encode())
@@ -286,16 +272,17 @@ apt-get install -y awscli
 # Install go tools
 go get -u github.com/tomnomnom/anew
 go get -u github.com/jaeles-project/gospider"""
-        fileBuffer.write(fileContents)
-        objectBuffer = io.BytesIO(fileBuffer.getvalue().encode())
+    
+    fileBuffer.write(fileContents)
+    objectBuffer = io.BytesIO(fileBuffer.getvalue().encode())
 
-        # Upload file to S3
-        object_name = operationType + '-' + toolName + '.sh'
-        object_path = operationType + '/' + object_name
-        status = upload_object(objectBuffer,basePath,object_path)
-        fileBuffer.close()
-        objectBuffer.close()
-        return status
+    # Upload file to S3
+    object_name = operationType + '-' + toolName + '.sh'
+    object_path = operationType + '/' + object_name
+    status = upload_object(objectBuffer,basePath,object_path)
+    fileBuffer.close()
+    objectBuffer.close()
+    return status
         
 def generateBootloaderScript(programName, toolName, basePath):
     
@@ -316,7 +303,7 @@ packages:
 runcmd:
     - export HACK=/root
     - mkdir $HACK/security
-    - mkdir $HACK/security/config
+    - mkdir $HACK/security/install
     - mkdir $HACK/security/run/{programName}
     - export AWS_ACCESS_KEY_ID={awsAccessKeyId}
     - export AWS_SECRET_ACCESS_KEY={awsSecretKey}
@@ -325,11 +312,11 @@ runcmd:
     - wait
     - aws s3 sync s3://{basePath}/run/{programName}/ $HACK/security/run/{programName}/
     - wait
-    - sh $HACK/security/config/bounty-startup-{toolName}.sh
-    - wait
-    - sh $HACK/security/run/{programName}/sync-{programName}.sh
+    - sh $HACK/security/install/install-{toolName}.sh
     - wait
     - sh $HACK/security/run/{programName}/{toolName}-{programName}.sh
+    - wait
+    - aws s3 sync s3://{basePath}/run/{programName}/ $HACK/security/run/
     - wait
     - shutdown now"""
 
