@@ -4,6 +4,9 @@ from botocore.exceptions import ClientError
 # Define list of functionality. This section can be updated as more are added.
 OPERATIONS_LIST = ['run', 'install', 'bootloader']
 TOOL_LIST = ['httpx', 'gospider']
+BUCKET_NAME = 'demo-bucket'
+SECRET_AWS_CREDENTIALS = 'brevity-straylight'
+AWS_REGION = 'us-east-1'
 
 def lambda_handler(event, context):
     
@@ -14,7 +17,7 @@ def lambda_handler(event, context):
         )
         return response['Parameter']['Value']
         
-    basePath = _getParameters('demo-bucket')
+    basePath = _getParameters(BUCKET_NAME)
    
     # Validate parameters and values.
     # Check if queryStringParameters exist. If not, default to None to avoid errors.
@@ -291,8 +294,8 @@ def generateBootloaderScript(programName, toolName, basePath):
     fileContents = ''
     
     # Load AWS access keys for s3 synchronization
-    secretName = 'brevity-straylight'
-    regionName = 'us-east-1'
+    secretName = SECRET_AWS_CREDENTIALS
+    regionName = AWS_REGION
     secretRetrieved = get_secret(secretName,regionName)
     secretjson = json.loads(secretRetrieved)
     awsAccessKeyId = secretjson['accesskey']
